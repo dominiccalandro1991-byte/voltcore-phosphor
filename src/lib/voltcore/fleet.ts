@@ -130,13 +130,6 @@ export const FLEET: Record<
     groupLabel: "Kinetic",
     rail: "product",
   },
-  "asml-nexus": {
-    repo: "dominiccalandro1991-byte/asml-nexus",
-    paths: ["src/"],
-    group: "kinetic",
-    groupLabel: "Kinetic",
-    rail: "product",
-  },
   "conways-game-of-life": {
     repo: "voltcore-org/conways-game-of-life",
     paths: ["src/"],
@@ -221,13 +214,6 @@ export const FLEET: Record<
     groupLabel: "Studio",
     rail: "studio",
   },
-  "VOLTCORE-IdeaForge": {
-    repo: "dominiccalandro1991-byte/VOLTCORE-IdeaForge",
-    paths: ["src/"],
-    group: "studio",
-    groupLabel: "Studio",
-    rail: "studio",
-  },
   "kite-zest-acre-fjord": {
     repo: "dominiccalandro1991-byte/kite-zest-acre-fjord",
     paths: ["src/"],
@@ -273,7 +259,6 @@ export const FLEET_GROUPS = [
       "trueturn",
       "aetherion",
       "voltcore-asml",
-      "asml-nexus",
       "conways-game-of-life",
       "paleochron-arrowforge",
     ],
@@ -299,7 +284,6 @@ export const FLEET_GROUPS = [
       "lumenarchive",
       "lumen-archive-core",
       "lovable-engine-core",
-      "VOLTCORE-IdeaForge",
     ],
   },
 ] as const;

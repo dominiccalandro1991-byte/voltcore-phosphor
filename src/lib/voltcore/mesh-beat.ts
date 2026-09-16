@@ -6,30 +6,31 @@ const URL = `${TRUNK_ORIGIN}/api/v1/events`;
 export const BEAT_MS = 60_000;
 const FRESH_MS = 90_000;
 
-/** Repos with no runnable app — payload is the diagnostic, not a fake live tick. */
+/** Construction targets only. Deprecated lanes are not listed. */
 export const INCOMPLETE: Record<
   string,
   { missing_dependencies: string[]; required_build_specs: string[] }
 > = {
-  "asml-nexus": {
-    missing_dependencies: ["source tree", "package.json"],
-    required_build_specs: ["seed ASML nexus app", "npm run build"],
-  },
-  "VOLTCORE-IdeaForge": {
-    missing_dependencies: ["runtime manifest (package.json | index.html)"],
-    required_build_specs: ["define a build entry"],
-  },
   causalrail: {
-    missing_dependencies: ["runtime manifest (package.json | index.html)"],
-    required_build_specs: ["define a build entry"],
+    missing_dependencies: ["runtime manifest (package.json | index.html)", "src tree"],
+    required_build_specs: [
+      "package.json with type:module",
+      "npm run build or static index.html",
+      "voltcore/heartbeat.mjs POSTing source=causalrail type=health.heartbeat every 60s",
+    ],
   },
   "paleochron-arrowforge": {
-    missing_dependencies: ["source tree"],
-    required_build_specs: ["seed application source on main"],
+    missing_dependencies: ["source tree (repo size 0)", "package.json", "index.html"],
+    required_build_specs: [
+      "seed application source on main",
+      "Expo/PWA lithic ID suite as described in repo metadata",
+      "voltcore/heartbeat.mjs POSTing source=paleochron-arrowforge type=health.heartbeat every 60s",
+    ],
   },
 };
 
 export async function postLaneBeat(source: string): Promise<boolean> {
+  if (source === "asml-nexus" || source === "VOLTCORE-IdeaForge") return false;
   const spec = FLEET[source];
   const diag = INCOMPLETE[source];
   const incomplete = Boolean(diag);
@@ -60,7 +61,6 @@ export async function postLaneBeat(source: string): Promise<boolean> {
   }
 }
 
-/** POST only lanes with no event in the last 90s. Sequential to avoid a stampede. */
 export async function beatMissingLanes(events: VoltEvent[]): Promise<number> {
   const now = Date.now();
   const fresh = new Set(
