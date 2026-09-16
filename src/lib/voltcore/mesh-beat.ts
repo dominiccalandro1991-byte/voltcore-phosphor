@@ -9,28 +9,13 @@ const BANNED = new Set<string>(DEPRECATED_LANES);
 
 /**
  * Construction-target diagnostics. Trunk Cloudflare cron is the source of truth.
- * This module is retained as a manual/debug emitter only — the Phosphor UI
- * no longer runs a 60s client telemetry loop.
+ * Empty: causalrail and paleochron-arrowforge are live lattice lanes.
+ * Keep this object empty in lockstep with Worker `INCOMPLETE = {}`.
  */
 export const INCOMPLETE: Record<
   string,
   { missing_dependencies: string[]; required_build_specs: string[] }
-> = {
-  causalrail: {
-    missing_dependencies: [],
-    required_build_specs: [
-      "package.json with type:module",
-      "voltcore/heartbeat.mjs POSTing source=causalrail type=health.heartbeat every 60s",
-    ],
-  },
-  "paleochron-arrowforge": {
-    missing_dependencies: [],
-    required_build_specs: [
-      "seed application source on main",
-      "voltcore/heartbeat.mjs POSTing source=paleochron-arrowforge type=health.heartbeat every 60s",
-    ],
-  },
-};
+> = {};
 
 export async function postLaneBeat(source: string): Promise<boolean> {
   if (BANNED.has(source)) return false;
