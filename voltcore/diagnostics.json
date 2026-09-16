@@ -1,0 +1,31 @@
+{
+  "repo": "dominiccalandro1991-byte/voltcore-phosphor",
+  "incomplete": false,
+  "missing_dependencies": [],
+  "required_build_specs": [
+    "voltcore-heartbeat workflow"
+  ],
+  "file_count": 20,
+  "root_entries": [
+    ".env.example",
+    ".gitignore",
+    ".node_modules.lock",
+    ".prettierrc",
+    ".project_id",
+    "AGENTS.md",
+    "AGENTS.project.md",
+    "README.md",
+    "eslint.config.mjs",
+    "migrations",
+    "package-lock.json",
+    "package.json",
+    "public",
+    "scripts",
+    "server",
+    "src",
+    "startup.sh",
+    "tsconfig.json",
+    "vercel.json",
+    "vite.config.ts"
+  ]
+}
