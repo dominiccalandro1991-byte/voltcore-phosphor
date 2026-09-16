@@ -7,12 +7,18 @@ function asEvent(row: Partial<VoltEvent> & { id?: string }): VoltEvent | null {
   return {
     id: String(row.id),
     created_at: String(row.created_at || new Date().toISOString()),
-    source: String(row.source || "unmapped"),
+    source: String(row.source || "_unmapped"),
     event_type: String(row.event_type || "event"),
     severity: String(row.severity || "info"),
     payload: row.payload && typeof row.payload === "object" ? row.payload : {},
     correlation_id: row.correlation_id ?? null,
   };
+}
+
+/** Prefer Worker lattice (31). Heal-subset `fleet` (10) is fallback only. */
+export function latticeIds(fleet: FleetSnapshot | null | undefined): string[] {
+  if (!fleet) return [];
+  return fleet.lattice ?? fleet.fleet ?? [];
 }
 
 export async function pullTrunkEvents(limit = 150): Promise<VoltEvent[]> {

@@ -4,6 +4,8 @@ import type { VoltEvent } from "./types";
 export const WINDOW_MS = 15 * 60 * 1000;
 export const CAP_PER_LANE = 96;
 export const CAP_EVENTS = 512;
+export const CATCH_ALL = "_unmapped";
+const CATCH_ALL_ALIAS = "unmapped";
 
 export type LaneTone = "idle" | "live" | "stale" | "danger" | "armed";
 
@@ -50,7 +52,36 @@ function emptyLane(id: string, spec: (typeof FLEET)[string] | undefined, group: 
   };
 }
 
-/** O(L) create — one lane per fleet key plus unmapped catch-all. */
+function isCatchAll(source: string): boolean {
+  return !source || source === CATCH_ALL || source === CATCH_ALL_ALIAS;
+}
+
+function bindCatchAll(index: Record<string, number>, slot: number): void {
+  index[CATCH_ALL] = slot;
+  index[CATCH_ALL_ALIAS] = slot;
+}
+
+function ensureCatchAll(state: PhosphorState): PhosphorState {
+  const i = state.index[CATCH_ALL];
+  if (i != null && state.lanes[i]?.id === CATCH_ALL) return state;
+  const lane = emptyLane(CATCH_ALL, undefined, "unmapped", "Unmapped");
+  const lanes = state.lanes.concat(lane);
+  const index = { ...state.index };
+  bindCatchAll(index, lanes.length - 1);
+  return { ...state, lanes, index };
+}
+
+function pruneIdleCatchAll(state: PhosphorState): PhosphorState {
+  const last = state.lanes[state.lanes.length - 1];
+  if (!last || last.id !== CATCH_ALL) return state;
+  if (laneHasSignal(last)) return state;
+  const lanes = state.lanes.slice(0, -1);
+  const index = { ...state.index };
+  bindCatchAll(index, lanes.length);
+  return { ...state, lanes, index };
+}
+
+/** O(L) create — one lane per fleet key. Catch-all stays in index only until it has ticks. */
 export function createPhosphor(now = Date.now()): PhosphorState {
   const lanes: PhosphorLane[] = [];
   const seen = new Set<string>();
@@ -61,17 +92,18 @@ export function createPhosphor(now = Date.now()): PhosphorState {
       lanes.push(emptyLane(id, FLEET[id], g.id, g.label));
     }
   }
-  lanes.push(emptyLane("_unmapped", undefined, "unmapped", "Unmapped"));
   const index: Record<string, number> = {};
   lanes.forEach((l, i) => {
     index[l.id] = i;
   });
+  bindCatchAll(index, lanes.length);
   return { t0: now - WINDOW_MS, t1: now, lanes, index };
 }
 
 export function laneIndex(state: PhosphorState, source: string): number {
+  if (isCatchAll(source)) return state.index[CATCH_ALL];
   if (source in state.index) return state.index[source];
-  return state.index._unmapped;
+  return state.index[CATCH_ALL];
 }
 
 function isDanger(sev: string): boolean {
@@ -82,9 +114,11 @@ function isDanger(sev: string): boolean {
 export function ingestEvent(state: PhosphorState, ev: VoltEvent): PhosphorState {
   const t = new Date(ev.created_at).getTime();
   if (!Number.isFinite(t)) return state;
-  const i = laneIndex(state, ev.source);
-  const lane = state.lanes[i];
-  if (lane.ticks.some((x) => x.id === ev.id)) return state;
+  const next = isCatchAll(ev.source) || !(ev.source in state.index) ? ensureCatchAll(state) : state;
+  const i = laneIndex(next, ev.source);
+  const lane = next.lanes[i];
+  if (!lane) return next;
+  if (lane.ticks.some((x) => x.id === ev.id)) return next;
   const tick: PhosphorTick = {
     id: ev.id,
     t,
@@ -93,9 +127,9 @@ export function ingestEvent(state: PhosphorState, ev: VoltEvent): PhosphorState 
     source: ev.source,
   };
   const ticks = lane.ticks.length >= CAP_PER_LANE ? lane.ticks.slice(1).concat(tick) : lane.ticks.concat(tick);
-  const lanes = state.lanes.slice();
+  const lanes = next.lanes.slice();
   lanes[i] = { ...lane, ticks, lastT: Math.max(lane.lastT ?? 0, t), present: true };
-  return { ...state, lanes };
+  return { ...next, lanes };
 }
 
 export function ingestMany(state: PhosphorState, events: VoltEvent[]): PhosphorState {
@@ -122,9 +156,9 @@ export function stepPhosphor(state: PhosphorState, now: number): PhosphorState {
   return { ...state, t0, t1, lanes };
 }
 
-/** Trunk fleet ids + events → lattice. O(L + E). */
+/** Trunk lattice ids + events → lattice. O(L + E). Idle catch-all is not rendered. */
 export function hydratePhosphor(events: VoltEvent[], fleetIds: string[], now: number): PhosphorState {
-  return stepPhosphor(markPresent(ingestMany(createPhosphor(now), events), fleetIds), now);
+  return pruneIdleCatchAll(stepPhosphor(markPresent(ingestMany(createPhosphor(now), events), fleetIds), now));
 }
 
 export function laneHasSignal(lane: PhosphorLane): boolean {

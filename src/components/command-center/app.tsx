@@ -3,6 +3,7 @@ import { Crosshair, Radio, RefreshCw, Send, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { fireMonday, pingFleet } from "@/lib/voltcore/server-fns";
 import { isAnomaly } from "@/lib/voltcore/anomaly";
+import { LANE_CEILING } from "@/lib/voltcore/fleet";
 import { ago, previewPayload } from "@/lib/voltcore/format";
 import {
   hydratePhosphor,
@@ -10,7 +11,7 @@ import {
   latestTick,
   type PhosphorLane,
 } from "@/lib/voltcore/phosphor";
-import { remediateOnTrunk, TRUNK_ORIGIN } from "@/lib/voltcore/trunk";
+import { latticeIds, remediateOnTrunk, TRUNK_ORIGIN } from "@/lib/voltcore/trunk";
 import { cn } from "@/lib/utils";
 import type { CommandCenterSnapshot, VoltEvent } from "@/lib/voltcore/types";
 import { PhosphorLattice } from "./lattice";
@@ -33,8 +34,8 @@ export function CommandCenter({ initial }: { initial: CommandCenterSnapshot }) {
   } | null>(null);
 
   const phosphor = useMemo(
-    () => hydratePhosphor(snap.events, snap.fleet.fleet ?? [], now),
-    [snap.events, snap.fleet.fleet, now],
+    () => hydratePhosphor(snap.events, latticeIds(snap.fleet), now),
+    [snap.events, snap.fleet, now],
   );
 
   const selectedLane = phosphor.lanes.find((l) => l.id === selectedLaneId) ?? null;
@@ -131,7 +132,7 @@ export function CommandCenter({ initial }: { initial: CommandCenterSnapshot }) {
           <div>
             <dt className="inline text-subtle">LANES </dt>
             <dd className="inline text-fg">
-              {signalN}/{phosphor.lanes.length}
+              {signalN}/{LANE_CEILING}
             </dd>
           </div>
           <div>

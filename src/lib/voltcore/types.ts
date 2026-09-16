@@ -101,6 +101,7 @@ export interface MondayWebhookPayload {
 export interface FleetSnapshot {
   status: "ok";
   fleet: string[];
+  lattice?: string[];
   mesh: boolean;
   trunk: boolean;
   neural: boolean;
