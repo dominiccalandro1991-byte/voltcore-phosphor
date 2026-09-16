@@ -4,7 +4,12 @@ import { Button } from "@/components/ui/button";
 import { fireMonday, pingFleet } from "@/lib/voltcore/server-fns";
 import { isAnomaly } from "@/lib/voltcore/anomaly";
 import { ago, previewPayload } from "@/lib/voltcore/format";
-import { createPhosphor, ingestMany, laneTone, stepPhosphor } from "@/lib/voltcore/phosphor";
+import {
+  hydratePhosphor,
+  laneHasSignal,
+  latestTick,
+  type PhosphorLane,
+} from "@/lib/voltcore/phosphor";
 import { remediateOnTrunk, TRUNK_ORIGIN } from "@/lib/voltcore/trunk";
 import { cn } from "@/lib/utils";
 import type { CommandCenterSnapshot, VoltEvent } from "@/lib/voltcore/types";
@@ -17,6 +22,7 @@ export function CommandCenter({ initial }: { initial: CommandCenterSnapshot }) {
   const { snap, link, now, refresh } = useLive(initial);
   const [pulse, setPulse] = useState(PULSE_PRESETS[0]);
   const [busy, setBusy] = useState(false);
+  const [selectedLaneId, setSelectedLaneId] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [remediate, setRemediate] = useState<{
     event: VoltEvent;
@@ -27,14 +33,40 @@ export function CommandCenter({ initial }: { initial: CommandCenterSnapshot }) {
   } | null>(null);
 
   const phosphor = useMemo(
-    () => stepPhosphor(ingestMany(createPhosphor(now), snap.events), now),
-    [snap.events, now],
+    () => hydratePhosphor(snap.events, snap.fleet.fleet ?? [], now),
+    [snap.events, snap.fleet.fleet, now],
   );
 
-  const focused = snap.events.find((e) => e.id === focusId) || snap.events[0] || null;
-  const liveN = phosphor.lanes.filter((l) => laneTone(l, now) === "live").length;
-  const dangerN = phosphor.lanes.filter((l) => laneTone(l, now) === "danger").length;
+  const selectedLane = phosphor.lanes.find((l) => l.id === selectedLaneId) ?? null;
+
+  const focused: VoltEvent | null = useMemo(() => {
+    if (focusId) {
+      const hit = snap.events.find((e) => e.id === focusId);
+      if (hit) return hit;
+    }
+    if (selectedLaneId) {
+      return snap.events.find((e) => e.source === selectedLaneId) ?? null;
+    }
+    return null;
+  }, [focusId, selectedLaneId, snap.events]);
+
+  const signalN = phosphor.lanes.filter(laneHasSignal).length;
   const latestRun = snap.runs[0] || null;
+
+  function selectLane(lane: PhosphorLane) {
+    setSelectedLaneId(lane.id);
+    const tick = latestTick(lane);
+    if (tick?.id) setFocusId(tick.id);
+    else {
+      const ev = snap.events.find((e) => e.source === lane.id);
+      setFocusId(ev?.id ?? null);
+    }
+  }
+
+  function setScope(tickId: string, lane: PhosphorLane) {
+    setSelectedLaneId(lane.id);
+    setFocusId(tickId);
+  }
 
   async function dispatchPulse() {
     setBusy(true);
@@ -99,16 +131,18 @@ export function CommandCenter({ initial }: { initial: CommandCenterSnapshot }) {
           <div>
             <dt className="inline text-subtle">LANES </dt>
             <dd className="inline text-fg">
-              {liveN}/{phosphor.lanes.length}
+              {signalN}/{phosphor.lanes.length}
             </dd>
           </div>
           <div>
-            <dt className="inline text-subtle">SEV </dt>
-            <dd className={cn("inline", dangerN ? "text-danger" : "text-fg")}>{dangerN}</dd>
+            <dt className="inline text-subtle">SCOPE </dt>
+            <dd className="inline text-fg">{selectedLane?.id ?? "—"}</dd>
           </div>
           <div>
             <dt className="inline text-subtle">TRUNK </dt>
-            <dd className="inline text-fg">{snap.fleet.supabase ? "sb" : "—"} {snap.fleet.openrouter ? "or" : ""} {snap.fleet.mesh ? "mesh" : ""}</dd>
+            <dd className="inline text-fg">
+              {snap.fleet.supabase ? "sb" : "—"} {snap.fleet.openrouter ? "or" : ""} {snap.fleet.mesh ? "mesh" : ""}
+            </dd>
           </div>
           <div>
             <dt className="inline text-subtle">WINDOW </dt>
@@ -121,8 +155,10 @@ export function CommandCenter({ initial }: { initial: CommandCenterSnapshot }) {
         <PhosphorLattice
           state={phosphor}
           now={now}
+          selectedLaneId={selectedLaneId}
           selectedId={focused?.id ?? null}
-          onHit={(hit) => setFocusId(hit.tick.id)}
+          onSelectLane={selectLane}
+          onSetScope={setScope}
         />
       </section>
 
@@ -148,8 +184,12 @@ export function CommandCenter({ initial }: { initial: CommandCenterSnapshot }) {
                 {previewPayload(focused.payload)}
               </pre>
             </div>
+          ) : selectedLane ? (
+            <p className="mt-4 text-sm text-muted">
+              Lane {selectedLane.id} — {selectedLane.repo || "no repo map"}. No event in window.
+            </p>
           ) : (
-            <p className="mt-4 text-sm text-muted">Click a phosphor tick. One event at a time.</p>
+            <p className="mt-4 text-sm text-muted">Click a lane or a phosphor tick.</p>
           )}
 
           {latestRun ? (

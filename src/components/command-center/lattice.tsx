@@ -1,13 +1,15 @@
 import { useEffect, useRef } from "react";
 import {
   hitTest,
+  laneHasSignal,
   laneTone,
   xOf,
-  type PhosphorHit,
+  type PhosphorLane,
   type PhosphorState,
 } from "@/lib/voltcore/phosphor";
+import { cn } from "@/lib/utils";
 
-const PAD_L = 132;
+const PAD_L = 8;
 const ROW = 22;
 
 function cssVar(name: string, fallback: string): string {
@@ -16,16 +18,27 @@ function cssVar(name: string, fallback: string): string {
   return v || fallback;
 }
 
+function toneClass(tone: string) {
+  if (tone === "danger") return "text-danger";
+  if (tone === "stale") return "text-warn";
+  if (tone === "live" || tone === "armed") return "text-primary";
+  return "text-muted";
+}
+
 export function PhosphorLattice({
   state,
   now,
+  selectedLaneId,
   selectedId,
-  onHit,
+  onSelectLane,
+  onSetScope,
 }: {
   state: PhosphorState;
   now: number;
+  selectedLaneId: string | null;
   selectedId: string | null;
-  onHit: (hit: PhosphorHit) => void;
+  onSelectLane: (lane: PhosphorLane) => void;
+  onSetScope: (tickId: string, lane: PhosphorLane) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -38,12 +51,10 @@ export function PhosphorLattice({
     if (!ctx) return;
 
     const bg = cssVar("--color-bg", "#07090c");
-    const raised = cssVar("--color-raised", "#161d26");
     const muted = cssVar("--color-subtle", "#5d7178");
     const primary = cssVar("--color-primary", "#00e5ff");
     const danger = cssVar("--color-danger", "#ff4d4d");
     const warn = cssVar("--color-warn", "#d4a017");
-    const fg = cssVar("--color-fg", "#e8f0f2");
 
     const width = wrap.clientWidth;
     const height = Math.max(state.lanes.length * ROW, 240);
@@ -55,9 +66,6 @@ export function PhosphorLattice({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, width, height);
-
-    ctx.fillStyle = raised;
-    ctx.fillRect(0, 0, PAD_L, height);
 
     const span = Math.max(1, state.t1 - state.t0);
     ctx.strokeStyle = "rgba(0, 229, 255, 0.06)";
@@ -71,22 +79,18 @@ export function PhosphorLattice({
       ctx.stroke();
     }
 
-    ctx.font = "10px 'IBM Plex Mono', ui-monospace, monospace";
-    ctx.textBaseline = "middle";
-
     state.lanes.forEach((lane, i) => {
       const y = i * ROW + ROW / 2;
       const tone = laneTone(lane, now);
       const color =
-        tone === "danger" ? danger : tone === "stale" ? warn : tone === "live" ? primary : muted;
-      ctx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent";
-      ctx.fillRect(PAD_L, i * ROW, width - PAD_L, ROW);
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(10, y, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = fg;
-      ctx.fillText(lane.id.slice(0, 18), 18, y);
+        tone === "danger" ? danger : tone === "stale" ? warn : tone === "live" || tone === "armed" ? primary : muted;
+      if (selectedLaneId === lane.id) {
+        ctx.fillStyle = "rgba(0, 229, 255, 0.08)";
+        ctx.fillRect(0, i * ROW, width, ROW);
+      } else if (i % 2 === 0) {
+        ctx.fillStyle = "rgba(255,255,255,0.015)";
+        ctx.fillRect(0, i * ROW, width, ROW);
+      }
       ctx.strokeStyle = `${color}33`;
       ctx.beginPath();
       ctx.moveTo(PAD_L, y);
@@ -112,7 +116,7 @@ export function PhosphorLattice({
     ctx.lineTo(playX, height);
     ctx.stroke();
     ctx.globalAlpha = 1;
-  }, [state, now, selectedId]);
+  }, [state, now, selectedId, selectedLaneId]);
 
   function pointer(e: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
@@ -121,18 +125,52 @@ export function PhosphorLattice({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     const hit = hitTest(state, x, y, rect.width, ROW, PAD_L);
-    if (hit && hit.tick.id) onHit(hit);
+    if (!hit) return;
+    onSelectLane(hit.lane);
+    if (hit.tick?.id) onSetScope(hit.tick.id, hit.lane);
   }
 
   return (
-    <div ref={wrapRef} className="relative min-h-[240px] w-full overflow-x-auto">
-      <canvas
-        ref={canvasRef}
-        className="block w-full cursor-crosshair"
-        onPointerDown={pointer}
-        role="img"
-        aria-label="Phosphor lattice of fleet event traces"
-      />
+    <div className="grid grid-cols-[9.5rem_minmax(0,1fr)] sm:grid-cols-[11rem_minmax(0,1fr)]">
+      <nav
+        className="max-h-[70vh] overflow-y-auto border-r border-border bg-raised"
+        aria-label="Fleet lanes"
+      >
+        {state.lanes.map((lane) => {
+          const tone = laneTone(lane, now);
+          const active = selectedLaneId === lane.id;
+          return (
+            <button
+              key={lane.id}
+              type="button"
+              onClick={() => onSelectLane(lane)}
+              className={cn(
+                "flex min-h-10 w-full items-center gap-2 border-b border-border px-2 text-left font-mono text-xs",
+                active ? "bg-primary/10 text-primary" : "text-fg",
+              )}
+            >
+              <span className={cn("size-1.5 shrink-0 rounded-full bg-current", toneClass(tone))} />
+              <span className="truncate">{lane.id}</span>
+              {laneHasSignal(lane) ? (
+                <span className={cn("ml-auto font-mono text-[0.65rem] uppercase", toneClass(tone))}>
+                  {tone}
+                </span>
+              ) : (
+                <span className="ml-auto text-subtle">idle</span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+      <div ref={wrapRef} className="relative min-h-[240px] min-w-0 overflow-x-auto">
+        <canvas
+          ref={canvasRef}
+          className="block w-full cursor-crosshair"
+          onPointerDown={pointer}
+          role="img"
+          aria-label="Phosphor lattice of fleet event traces"
+        />
+      </div>
     </div>
   );
 }

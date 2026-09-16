@@ -5,7 +5,7 @@ export const WINDOW_MS = 15 * 60 * 1000;
 export const CAP_PER_LANE = 96;
 export const CAP_EVENTS = 512;
 
-export type LaneTone = "idle" | "live" | "stale" | "danger";
+export type LaneTone = "idle" | "live" | "stale" | "danger" | "armed";
 
 export interface PhosphorTick {
   id: string;
@@ -22,6 +22,7 @@ export interface PhosphorLane {
   groupLabel: string;
   ticks: PhosphorTick[];
   lastT: number | null;
+  present: boolean;
 }
 
 export interface PhosphorState {
@@ -33,8 +34,20 @@ export interface PhosphorState {
 
 export interface PhosphorHit {
   lane: PhosphorLane;
-  tick: PhosphorTick;
+  tick: PhosphorTick | null;
   dist: number;
+}
+
+function emptyLane(id: string, spec: (typeof FLEET)[string] | undefined, group: string, groupLabel: string): PhosphorLane {
+  return {
+    id,
+    repo: spec?.repo ?? "",
+    group: spec?.group ?? group,
+    groupLabel: spec?.groupLabel ?? groupLabel,
+    ticks: [],
+    lastT: null,
+    present: false,
+  };
 }
 
 /** O(L) create — one lane per fleet key plus unmapped catch-all. */
@@ -45,25 +58,10 @@ export function createPhosphor(now = Date.now()): PhosphorState {
     for (const id of g.sources) {
       if (seen.has(id)) continue;
       seen.add(id);
-      const spec = FLEET[id];
-      lanes.push({
-        id,
-        repo: spec?.repo ?? "",
-        group: spec?.group ?? g.id,
-        groupLabel: spec?.groupLabel ?? g.label,
-        ticks: [],
-        lastT: null,
-      });
+      lanes.push(emptyLane(id, FLEET[id], g.id, g.label));
     }
   }
-  lanes.push({
-    id: "_unmapped",
-    repo: "",
-    group: "unmapped",
-    groupLabel: "Unmapped",
-    ticks: [],
-    lastT: null,
-  });
+  lanes.push(emptyLane("_unmapped", undefined, "unmapped", "Unmapped"));
   const index: Record<string, number> = {};
   lanes.forEach((l, i) => {
     index[l.id] = i;
@@ -71,7 +69,6 @@ export function createPhosphor(now = Date.now()): PhosphorState {
   return { t0: now - WINDOW_MS, t1: now, lanes, index };
 }
 
-/** O(1) lane lookup; unknown sources land on _unmapped. */
 export function laneIndex(state: PhosphorState, source: string): number {
   if (source in state.index) return state.index[source];
   return state.index._unmapped;
@@ -82,7 +79,6 @@ function isDanger(sev: string): boolean {
   return s === "critical" || s === "fatal" || s === "high" || s === "error";
 }
 
-/** O(1) amortized ingest into a ring buffer. */
 export function ingestEvent(state: PhosphorState, ev: VoltEvent): PhosphorState {
   const t = new Date(ev.created_at).getTime();
   if (!Number.isFinite(t)) return state;
@@ -98,11 +94,10 @@ export function ingestEvent(state: PhosphorState, ev: VoltEvent): PhosphorState 
   };
   const ticks = lane.ticks.length >= CAP_PER_LANE ? lane.ticks.slice(1).concat(tick) : lane.ticks.concat(tick);
   const lanes = state.lanes.slice();
-  lanes[i] = { ...lane, ticks, lastT: Math.max(lane.lastT ?? 0, t) };
+  lanes[i] = { ...lane, ticks, lastT: Math.max(lane.lastT ?? 0, t), present: true };
   return { ...state, lanes };
 }
 
-/** O(E) batch — E ≤ 150 typical. */
 export function ingestMany(state: PhosphorState, events: VoltEvent[]): PhosphorState {
   let next = state;
   const slice = events.slice(0, CAP_EVENTS);
@@ -110,7 +105,13 @@ export function ingestMany(state: PhosphorState, events: VoltEvent[]): PhosphorS
   return next;
 }
 
-/** O(L) window slide — drop ticks older than t0. */
+export function markPresent(state: PhosphorState, fleetIds: string[]): PhosphorState {
+  if (!fleetIds.length) return state;
+  const set = new Set(fleetIds);
+  const lanes = state.lanes.map((lane) => (set.has(lane.id) ? { ...lane, present: true } : lane));
+  return { ...state, lanes };
+}
+
 export function stepPhosphor(state: PhosphorState, now: number): PhosphorState {
   const t1 = now;
   const t0 = now - WINDOW_MS;
@@ -121,14 +122,28 @@ export function stepPhosphor(state: PhosphorState, now: number): PhosphorState {
   return { ...state, t0, t1, lanes };
 }
 
-export function laneTone(lane: PhosphorLane, now: number): LaneTone {
-  if (!lane.lastT) return "idle";
-  if (lane.ticks.some((tk) => isDanger(tk.sev) && now - tk.t < STALE_MS * 2)) return "danger";
-  if (now - lane.lastT > STALE_MS) return "stale";
-  return "live";
+/** Trunk fleet ids + events → lattice. O(L + E). */
+export function hydratePhosphor(events: VoltEvent[], fleetIds: string[], now: number): PhosphorState {
+  return stepPhosphor(markPresent(ingestMany(createPhosphor(now), events), fleetIds), now);
 }
 
-/** O(log E_lane) nearest tick on a lane given time. */
+export function laneHasSignal(lane: PhosphorLane): boolean {
+  return lane.present || lane.lastT != null || lane.ticks.length > 0;
+}
+
+export function laneTone(lane: PhosphorLane, now: number): LaneTone {
+  if (lane.ticks.some((tk) => isDanger(tk.sev) && now - tk.t < STALE_MS * 2)) return "danger";
+  if (lane.lastT && now - lane.lastT <= STALE_MS) return "live";
+  if (lane.lastT) return "stale";
+  if (lane.present) return "armed";
+  return "idle";
+}
+
+export function latestTick(lane: PhosphorLane): PhosphorTick | null {
+  if (!lane.ticks.length) return null;
+  return lane.ticks[lane.ticks.length - 1];
+}
+
 export function selectTick(lane: PhosphorLane, t: number): PhosphorTick | null {
   const arr = lane.ticks;
   if (!arr.length) return null;
@@ -144,7 +159,6 @@ export function selectTick(lane: PhosphorLane, t: number): PhosphorTick | null {
   return Math.abs(a.t - t) <= Math.abs(b.t - t) ? a : b;
 }
 
-/** O(L) hit-test from canvas coords. */
 export function hitTest(
   state: PhosphorState,
   x: number,
@@ -156,10 +170,11 @@ export function hitTest(
   const i = Math.floor(y / rowH);
   const lane = state.lanes[i];
   if (!lane) return null;
+  if (x <= padL) return { lane, tick: latestTick(lane), dist: 0 };
   const span = Math.max(1, state.t1 - state.t0);
   const t = state.t0 + ((x - padL) / Math.max(1, width - padL)) * span;
   const tick = selectTick(lane, t);
-  if (!tick) return { lane, tick: { id: "", t, sev: "info", type: "", source: lane.id }, dist: Infinity };
+  if (!tick) return { lane, tick: null, dist: Infinity };
   const tx = padL + ((tick.t - state.t0) / span) * (width - padL);
   return { lane, tick, dist: Math.hypot(tx - x, 0) };
 }
@@ -172,6 +187,7 @@ export function serializePhosphor(state: PhosphorState): string {
       id: l.id,
       lastT: l.lastT,
       n: l.ticks.length,
+      present: l.present,
     })),
   });
 }
