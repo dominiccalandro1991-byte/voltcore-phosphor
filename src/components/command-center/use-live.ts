@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSnapshot } from "@/lib/voltcore/server-fns";
+import { BEAT_MS, beatMissingLanes } from "@/lib/voltcore/mesh-beat";
 import { mergeSnapshot, pullTrunkEvents, pullTrunkHealth } from "@/lib/voltcore/trunk";
 import type { CommandCenterSnapshot, InferenceRun, TelemetryRow, VoltEvent } from "@/lib/voltcore/types";
 
@@ -23,6 +24,7 @@ export function useLive(initial: CommandCenterSnapshot) {
   const [now, setNow] = useState(() => new Date(initial.fetched_at).getTime() || Date.now());
   const seen = useRef(new Set(initial.events.map((e) => e.id)));
   const sseOk = useRef(false);
+  const eventsRef = useRef(initial.events);
 
   const apply = useCallback((next: CommandCenterSnapshot, markFresh: boolean) => {
     setSnap((prev) => {
@@ -37,6 +39,7 @@ export function useLive(initial: CommandCenterSnapshot) {
         }
       }
       seen.current = new Set(next.events.map((e) => e.id));
+      eventsRef.current = next.events;
       return next;
     });
     setLink("live");
@@ -71,11 +74,15 @@ export function useLive(initial: CommandCenterSnapshot) {
         try {
           const row = JSON.parse(ev.data) as VoltEvent;
           if (!row?.id) return;
-          setSnap((prev) => ({
-            ...prev,
-            events: mergeById(prev.events, [row], 150),
-            fetched_at: new Date().toISOString(),
-          }));
+          setSnap((prev) => {
+            const events = mergeById(prev.events, [row], 150);
+            eventsRef.current = events;
+            return {
+              ...prev,
+              events,
+              fetched_at: new Date().toISOString(),
+            };
+          });
           if (!seen.current.has(row.id)) {
             seen.current.add(row.id);
             setFreshIds(new Set([row.id]));
@@ -120,10 +127,16 @@ export function useLive(initial: CommandCenterSnapshot) {
       if (document.visibilityState === "hidden") return;
       void refresh();
     }, 4000);
+    const beat = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void beatMissingLanes(eventsRef.current);
+    }, BEAT_MS);
     void refresh();
+    void beatMissingLanes(initial.events);
     return () => {
       es?.close();
       window.clearInterval(poll);
+      window.clearInterval(beat);
     };
   }, [refresh]);
 

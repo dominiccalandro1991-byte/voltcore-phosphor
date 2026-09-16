@@ -102,6 +102,13 @@ export const FLEET: Record<
     groupLabel: "Command",
     rail: "trunk",
   },
+  "voltcore-phosphor": {
+    repo: "dominiccalandro1991-byte/voltcore-phosphor",
+    paths: ["src/"],
+    group: "command",
+    groupLabel: "Command",
+    rail: "trunk",
+  },
   trueturn: {
     repo: "dominiccalandro1991-byte/TrueTurn",
     paths: ["src/", "public/"],
@@ -256,6 +263,7 @@ export const FLEET_GROUPS = [
       "monday",
       "voltcore-code-agent",
       "voltcore-anvil",
+      "voltcore-phosphor",
     ],
   },
   {
