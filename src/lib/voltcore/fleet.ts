@@ -1,5 +1,7 @@
 import type { FleetSource } from "./types";
 
+export const DEPRECATED_LANES = ["asml-nexus", "VOLTCORE-IdeaForge"] as const;
+
 export const FLEET: Record<
   string,
   { repo: string; paths: string[]; group: string; groupLabel: string; rail: "edge" | "trunk" | "product" | "studio" }
@@ -139,7 +141,7 @@ export const FLEET: Record<
   },
   "paleochron-arrowforge": {
     repo: "voltcore-org/paleochron-arrowforge",
-    paths: ["src/"],
+    paths: ["src/", "index.html", "voltcore/"],
     group: "kinetic",
     groupLabel: "Kinetic",
     rail: "product",
@@ -153,7 +155,7 @@ export const FLEET: Record<
   },
   causalrail: {
     repo: "voltcore-org/causalrail",
-    paths: ["src/"],
+    paths: ["client/", "server/", "voltcore/", "package.json"],
     group: "ops",
     groupLabel: "Ops",
     rail: "edge",
@@ -287,6 +289,9 @@ export const FLEET_GROUPS = [
     ],
   },
 ] as const;
+
+/** N-2 after purge of asml-nexus and VOLTCORE-IdeaForge. */
+export const LANE_CEILING = Object.keys(FLEET).length;
 
 export const ANOMALY = new Set(["critical", "fatal", "high", "error"]);
 export const RESOLVED_STATUS = new Set(["patched", "recovered", "resolved", "ok"]);
