@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { FLEET } from "./fleet";
 import { runCommand, runMondayPipeline } from "./pipeline.server";
 import { scheduleBackground } from "./schedule";
 import { insertEvent, insertTelemetry, listEvents, listRuns, listTelemetry } from "./telemetry.server";
@@ -9,6 +10,7 @@ import type { CommandCenterSnapshot, JsonMap, MondayEvent } from "./types";
 const EMPTY_FLEET = {
   status: "ok" as const,
   fleet: [] as string[],
+  lattice: Object.keys(FLEET),
   mesh: false,
   trunk: false,
   neural: false,
