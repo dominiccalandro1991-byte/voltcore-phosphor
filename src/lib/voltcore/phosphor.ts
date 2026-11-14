@@ -1,4 +1,4 @@
-import { FLEET, FLEET_GROUPS, STALE_MS } from "./fleet";
+import { DEPRECATED_LANES, FLEET, FLEET_GROUPS, LANE_ALIAS, STALE_MS } from "./fleet";
 import type { VoltEvent } from "./types";
 
 export const WINDOW_MS = 15 * 60 * 1000;
@@ -6,6 +6,7 @@ export const CAP_PER_LANE = 96;
 export const CAP_EVENTS = 512;
 export const CATCH_ALL = "_unmapped";
 const CATCH_ALL_ALIAS = "unmapped";
+const PURGED = new Set<string>(DEPRECATED_LANES);
 
 export type LaneTone = "idle" | "live" | "stale" | "danger" | "armed";
 
@@ -56,6 +57,11 @@ function isCatchAll(source: string): boolean {
   return !source || source === CATCH_ALL || source === CATCH_ALL_ALIAS;
 }
 
+function canonicalSource(source: string): string {
+  if (isCatchAll(source)) return CATCH_ALL;
+  return LANE_ALIAS[source] ?? source;
+}
+
 function bindCatchAll(index: Record<string, number>, slot: number): void {
   index[CATCH_ALL] = slot;
   index[CATCH_ALL_ALIAS] = slot;
@@ -71,17 +77,21 @@ function ensureCatchAll(state: PhosphorState): PhosphorState {
   return { ...state, lanes, index };
 }
 
+/** Drop the catch-all unless it currently holds unmatched ticks. */
 function pruneIdleCatchAll(state: PhosphorState): PhosphorState {
-  const last = state.lanes[state.lanes.length - 1];
-  if (!last || last.id !== CATCH_ALL) return state;
-  if (laneHasSignal(last)) return state;
-  const lanes = state.lanes.slice(0, -1);
-  const index = { ...state.index };
+  const hit = state.lanes.find((lane) => lane.id === CATCH_ALL);
+  if (!hit) return state;
+  if (hit.ticks.length > 0) return state;
+  const lanes = state.lanes.filter((lane) => lane.id !== CATCH_ALL);
+  const index: Record<string, number> = {};
+  lanes.forEach((lane, i) => {
+    index[lane.id] = i;
+  });
   bindCatchAll(index, lanes.length);
   return { ...state, lanes, index };
 }
 
-/** O(L) create — one lane per fleet key. Catch-all stays in index only until it has ticks. */
+/** O(L) create — one lane per fleet key. Catch-all is not a row until unmatched ticks exist. */
 export function createPhosphor(now = Date.now()): PhosphorState {
   const lanes: PhosphorLane[] = [];
   const seen = new Set<string>();
@@ -101,8 +111,9 @@ export function createPhosphor(now = Date.now()): PhosphorState {
 }
 
 export function laneIndex(state: PhosphorState, source: string): number {
-  if (isCatchAll(source)) return state.index[CATCH_ALL];
-  if (source in state.index) return state.index[source];
+  const id = canonicalSource(source);
+  if (isCatchAll(id)) return state.index[CATCH_ALL];
+  if (id in state.index && state.lanes[state.index[id]]?.id === id) return state.index[id];
   return state.index[CATCH_ALL];
 }
 
@@ -112,9 +123,12 @@ function isDanger(sev: string): boolean {
 }
 
 export function ingestEvent(state: PhosphorState, ev: VoltEvent): PhosphorState {
+  if (PURGED.has(ev.source)) return state;
   const t = new Date(ev.created_at).getTime();
   if (!Number.isFinite(t)) return state;
-  const next = isCatchAll(ev.source) || !(ev.source in state.index) ? ensureCatchAll(state) : state;
+  const id = canonicalSource(ev.source);
+  const known = !isCatchAll(id) && id in state.index && state.lanes[state.index[id]]?.id === id;
+  const next = known ? state : ensureCatchAll(state);
   const i = laneIndex(next, ev.source);
   const lane = next.lanes[i];
   if (!lane) return next;

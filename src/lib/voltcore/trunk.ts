@@ -1,6 +1,9 @@
+import { DEPRECATED_LANES, FLEET, LANE_CEILING } from "./fleet";
 import type { CommandCenterSnapshot, FleetSnapshot, VoltEvent } from "./types";
 
 export const TRUNK_ORIGIN = "https://core-api.dominic-calandro1991.workers.dev";
+
+const PURGED = new Set<string>(DEPRECATED_LANES);
 
 function asEvent(row: Partial<VoltEvent> & { id?: string }): VoltEvent | null {
   if (!row?.id) return null;
@@ -15,10 +18,11 @@ function asEvent(row: Partial<VoltEvent> & { id?: string }): VoltEvent | null {
   };
 }
 
-/** Prefer Worker lattice (31). Heal-subset `fleet` (10) is fallback only. */
+/** 46-key lattice only. The heal-subset `fleet` array is never the ceiling. */
 export function latticeIds(fleet: FleetSnapshot | null | undefined): string[] {
-  if (!fleet) return [];
-  return fleet.lattice ?? fleet.fleet ?? [];
+  const lattice = fleet?.lattice?.filter((id) => id && !PURGED.has(id));
+  if (lattice?.length) return lattice;
+  return Object.keys(FLEET);
 }
 
 export async function pullTrunkEvents(limit = 150): Promise<VoltEvent[]> {
@@ -32,7 +36,18 @@ export async function pullTrunkHealth(): Promise<FleetSnapshot | null> {
   const res = await fetch(`${TRUNK_ORIGIN}/api/v1/health`);
   if (!res.ok) return null;
   const body = (await res.json()) as FleetSnapshot;
-  return body;
+  const fromTrunk = Array.isArray(body.lattice) ? body.lattice.filter((id) => id && !PURGED.has(id)) : [];
+  const lattice = fromTrunk.length >= LANE_CEILING ? fromTrunk : Object.keys(FLEET);
+  return {
+    status: "ok",
+    fleet: Array.isArray(body.fleet) ? body.fleet : [],
+    lattice,
+    mesh: Boolean(body.mesh),
+    trunk: Boolean(body.trunk),
+    neural: Boolean(body.neural),
+    openrouter: Boolean(body.openrouter),
+    supabase: Boolean(body.supabase),
+  };
 }
 
 export async function remediateOnTrunk(event: VoltEvent): Promise<{
@@ -67,10 +82,14 @@ export function mergeSnapshot(
   for (const ev of trunkEvents) map.set(ev.id, ev);
   for (const ev of local.events) if (!map.has(ev.id)) map.set(ev.id, ev);
   const events = [...map.values()].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 150);
+  const fleet = trunkFleet ?? local.fleet;
   return {
     ...local,
     events,
-    fleet: trunkFleet ?? local.fleet,
+    fleet: {
+      ...fleet,
+      lattice: latticeIds(fleet),
+    },
     fetched_at: new Date().toISOString(),
   };
 }

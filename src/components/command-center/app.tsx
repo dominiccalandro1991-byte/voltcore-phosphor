@@ -6,6 +6,7 @@ import { isAnomaly } from "@/lib/voltcore/anomaly";
 import { LANE_CEILING } from "@/lib/voltcore/fleet";
 import { ago, previewPayload } from "@/lib/voltcore/format";
 import {
+  CATCH_ALL,
   hydratePhosphor,
   laneHasSignal,
   latestTick,
@@ -51,7 +52,7 @@ export function CommandCenter({ initial }: { initial: CommandCenterSnapshot }) {
     return null;
   }, [focusId, selectedLaneId, snap.events]);
 
-  const signalN = phosphor.lanes.filter(laneHasSignal).length;
+  const signalN = phosphor.lanes.filter((lane) => lane.id !== CATCH_ALL && laneHasSignal(lane)).length;
   const latestRun = snap.runs[0] || null;
 
   function selectLane(lane: PhosphorLane) {
